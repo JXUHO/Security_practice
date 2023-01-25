@@ -30,9 +30,11 @@ app.use(passport.session());
 mongoose.set("strictQuery", false);
 mongoose.connect("mongodb://127.0.0.1:27017/userDB");
 
-const userSchema = new mongoose.Schema({
+const userSchema = new mongoose.Schema ({
   email: String,
   password: String,
+  googleId: String,
+  secret: String
 });
 
 // mongoose schema에 passportLocalMongoose을 plugin으로 추가.(비밀번호를 hash & salt, db에 저장하는 역할)
@@ -45,23 +47,18 @@ const User = new mongoose.model("User", userSchema);
 passport.use(User.createStrategy());
 
 // serialize, deserialize는 session에서 사용됨
-passport.serializeUser(function(user, cb) {
-  process.nextTick(function() {
-    cb(null, { id: user.id, username: user.username, name: user.name });
-  });
+passport.serializeUser(function(user, done) {
+  done(null, user);
 });
-
-passport.deserializeUser(function(user, cb) {
-  process.nextTick(function() {
-    return cb(null, user);
-  });
+ 
+passport.deserializeUser(function(user, done) {
+  done(null, user);
 });
 
 passport.use(new GoogleStrategy({
   clientID: process.env.CLIENT_ID,
   clientSecret: process.env.CLIENT_SECRET,
-  callbackURL: "https://localhost:3000/auth/google/secrets",
-  userProfileURL: "https://www.googleapis.com/oauth2/v3/userinfo"
+  callbackURL: "http://localhost:3000/auth/google/secrets"
 },
 function(accessToken, refreshToken, profile, cb) {
   console.log(profile);
@@ -76,16 +73,18 @@ app.get("/", function (req, res) {
   res.render("home");
 });
 
-app.get("/auth/google",
-  passport.authenticate("google", { scope: ["profile"] }));
+app.get('/auth/google', 
+  passport.authenticate('google', {
+    scope: ['profile', 'email']
+  })
+);
 
-
-app.get("/auth/google/secrets", 
-  passport.authenticate("google", { failureRedirect: "/login" }),
+app.get("/auth/google/secrets",
+  passport.authenticate('google', { failureRedirect: "/login" }),
   function(req, res) {
-    // Successful authentication, redirect home.
+    // Successful authentication, redirect to secrets.
     res.redirect("/secrets");
-});
+  });
 
 
 
@@ -97,12 +96,44 @@ app.get("/register", function (req, res) {
   res.render("register");
 });
 
-app.get("/secrets", function (req, res) {
-  if (req.isAuthenticated()) {
-    res.render("secrets");
+app.get("/secrets", function(req, res){
+  User.find({"secret": {$ne: null}}, function(err, foundUsers){
+    if (err){
+      console.log(err);
+    } else {
+      if (foundUsers) {
+        res.render("secrets", {usersWithSecrets: foundUsers});
+      }
+    }
+  });
+});
+
+app.get("/submit", function(req, res){
+  if (req.isAuthenticated()){
+    res.render("submit");
   } else {
     res.redirect("/login");
   }
+});
+
+app.post("/submit", function(req, res){
+  const submittedSecret = req.body.secret;
+
+//Once the user is authenticated and their session gets saved, their user details are saved to req.user.
+  // console.log(req.user.id);
+
+  User.findById(req.user.id, function(err, foundUser){
+    if (err) {
+      console.log(err);
+    } else {
+      if (foundUser) {
+        foundUser.secret = submittedSecret;
+        foundUser.save(function(){
+          res.redirect("/secrets");
+        });
+      }
+    }
+  });
 });
 
 app.get("/logout", function (req, res) {
@@ -123,7 +154,7 @@ app.post("/register", function (req, res) {
       if (err) {
         console.log(err);
         res.redirect("/register");
-      } else {
+      } else {  
         passport.authenticate("local")(req, res, function () {
           res.redirect("/secrets");
         });
